@@ -1,0 +1,79 @@
+<mujoco model="red_cube_to_bin_scene">
+  <include file="so101_new_calib.xml" />
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.35 0.35 0.35" specular="0 0 0" />
+    <rgba haze="0.15 0.25 0.35 1" />
+    <global azimuth="150" elevation="-25" offwidth="640" offheight="480" />
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072" />
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300" />
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2" />
+    <material name="table_mat" rgba="0.55 0.42 0.28 1" />
+    <!-- Saturated red, deliberately in perception.py's LOWER_RED_1/UPPER_RED_1 HSV band -
+         the whole point of this scene is that the REAL cv2 HSV detector runs on rendered
+         pixels, not a synthetic pixel-math stand-in like the numpy-only sim_dry_run.py. -->
+    <material name="cube_mat" rgba="0.85 0.08 0.08 1" />
+    <material name="bin_mat" rgba="0.05 0.05 0.05 1" />
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 3.5" dir="0 0 -1" directional="true" />
+    <geom name="floor" size="0 0 0.05" pos="0 0 0" type="plane" material="groundplane" />
+
+    <body name="table" pos="0.3 0 0.1">
+      <geom name="table_top" type="box" size="0.25 0.4 0.1" material="table_mat" />
+      <geom name="leg1" type="cylinder" size="0.02 0.1" pos="0.2 0.35 -0.1" material="table_mat" />
+      <geom name="leg2" type="cylinder" size="0.02 0.1" pos="-0.2 0.35 -0.1" material="table_mat" />
+      <geom name="leg3" type="cylinder" size="0.02 0.1" pos="0.2 -0.35 -0.1" material="table_mat" />
+      <geom name="leg4" type="cylinder" size="0.02 0.1" pos="-0.2 -0.35 -0.1" material="table_mat" />
+    </body>
+
+    <!-- Red cube: table top is at world z=0.2 (table pos.z=0.1 + half-height 0.1), cube
+         half-size 0.015 (3cm cube, matching config.py's CUBE_HEIGHT_MAX_M=0.06 comment
+         "a few cm") - freejoint so it's a real dynamic rigid body, genuinely graspable/
+         liftable/droppable via physics, not a kinematic prop. -->
+    <body name="red_cube" pos="0.38 0.05 0.217">
+      <freejoint name="cube_joint" />
+      <geom name="cube_geom" type="box" size="0.015 0.015 0.015" material="cube_mat" mass="0.02" friction="1.2 0.01 0.0002" />
+    </body>
+
+    <!-- Bin: an open-top box (bottom + 4 walls, all static/welded to the world) sized to
+         comfortably catch the cube (7x7cm footprint, 4cm walls vs. a 3cm cube), placed
+         across the table from the cube so TRANSPORT has to actually move somewhere. -->
+    <body name="bin" pos="0.30 -0.20 0.2">
+      <geom name="bin_bottom" type="box" size="0.035 0.035 0.002" pos="0 0 0.002" material="bin_mat" />
+      <geom name="bin_wall_px" type="box" size="0.003 0.035 0.02" pos="0.035 0 0.02" material="bin_mat" />
+      <geom name="bin_wall_nx" type="box" size="0.003 0.035 0.02" pos="-0.035 0 0.02" material="bin_mat" />
+      <geom name="bin_wall_py" type="box" size="0.035 0.003 0.02" pos="0 0.035 0.02" material="bin_mat" />
+      <geom name="bin_wall_ny" type="box" size="0.035 0.003 0.02" pos="0 -0.035 0.02" material="bin_mat" />
+    </body>
+
+    <!-- Fixed eye-to-hand overview camera (this scene's Astra-S stand-in) - not wired
+         into perception.estimate_xy_from_astra in mujoco_dry_run.py yet (that needs a
+         homography specific to this camera's projection - out of scope for this first
+         pass, see that file's docstring), but rendered/recorded so the workspace-level
+         view is visible, and available for a later pass to wire up for real.
+         Straight-down top-down view (xyaxes local-x=+x, local-y=+y => looks along -z) -
+         an angled version aimed past the table edge into the floor at first, fixed by
+         just pointing it straight down at the cube/bin's midpoint. -->
+    <camera name="astra_cam" pos="0.30 -0.05 0.65" xyaxes="1 0 0 0 1 0" fovy="60" />
+
+    <!-- Third-person camera purely for the recorded video, not read by any perception
+         code - lets a human actually watch what the arm did. -->
+    <camera name="onlooker_cam" pos="0.75 -0.55 0.55" xyaxes="0.6 0.8 0 -0.35 0.26 0.9" fovy="45" />
+
+    <!-- Debug marker, mujoco_env.py syncs its position to the `graspframe` site
+         (the fingers' own midpoint) every render - GREEN specifically so it never
+         trips perception.py's red-cube HSV detector, unlike a same-colored marker
+         would. Two uses: (1) one-time calibration of GRASP_TARGET_PX for this
+         synthetic wrist_cam (same idea as the real one being measured from a saved
+         frame, just done here in mujoco instead of by hand), (2) a free visual
+         sanity check in the recorded video of where the jaws actually are. -->
+    <body name="grasp_marker" mocap="true" pos="0.28 0 0.34">
+      <geom type="sphere" size="0.004" rgba="0 1 0 1" contype="0" conaffinity="0" />
+    </body>
+  </worldbody>
+</mujoco>
