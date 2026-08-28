@@ -239,10 +239,21 @@ overload protection and dropped an already-successful grasp.
 
 ## Setup
 
+This repo mirrors the real directory layout: this file lives in
+`vision_pick_place/task_red_cube_to_bin/`, and everything this package
+reads at runtime but doesn't itself contain lives one directory up in
+`vision_pick_place/` — the Astra S camera driver, the SO-101 URDF, and the
+table-plane calibration this specific rig produced. See that directory's
+own files (`astra_s_live.py`, `camera_hub.py`, `camera_utils.py`,
+`cube_detector.py`, `orbbec_color_camera.py`, `openni2_redist/`,
+`so101_urdf/`, `homography.json`) — nothing outside this repo is required
+for those, but a few Python packages are:
+
 ```bash
-# from ~/lerobot (this package expects the main lerobot venv/deps:
-# torch, opencv, numpy already present there)
-uv add google-genai   # if not already installed
+# from ~/lerobot (or wherever your lerobot checkout lives - this package
+# expects the main lerobot venv/deps: torch, opencv, numpy already present)
+uv add google-genai   # Gemini SDK, if not already installed
+uv pip install primesense   # ctypes wrapper the Astra S driver uses over openni2_redist/'s SDK
 
 # Gemini API key - either:
 export GEMINI_API_KEY="your-key-here"
@@ -250,17 +261,24 @@ export GEMINI_API_KEY="your-key-here"
 echo "your-key-here" > ~/.gemini_api_key && chmod 600 ~/.gemini_api_key
 ```
 
-You also need a **table-plane homography** calibration
-(`homography.json`, pixel → robot-frame xy) one directory up in
-`vision_pick_place/` — see `calibrate_camera.py` there for how it's
-produced (a handful of physically-touched calibration points). Camera
-frames themselves are read from published files
+`homography.json` here is **rig-specific** (pixel↔xy calibration tied to
+exactly how this Astra S was physically mounted over this table) — if
+your camera/table/robot-base geometry differs at all, redo it with
+`calibrate_camera.py` (one directory up; not included in this repo, since
+it additionally depends on `robot_control.py`, a raw-servo-register
+control layer from an earlier pipeline iteration not otherwise needed
+here) before trusting any of this package's coordinates.
+
+Camera frames are read from published files
 (`config.ASTRA_RGB_FRAME_PATH`, `config.ASTRA_DEPTH_MM_PATH`), written by
-`astra_s_live.py` (also one directory up) — **that script owns the actual
-camera device**; nothing in this package opens it directly. Run it first:
+`astra_s_live.py` — **that script owns the actual camera device**; nothing
+in this package opens it directly (only one process can hold a UVC/OpenNI2
+device open at a time). Run it first:
 
 ```bash
-ASTRA_LIVE_HEADLESS=1 python3 ../astra_s_live.py &   # headless: no GUI window of its own
+cd ../                                               # into vision_pick_place/
+ASTRA_LIVE_HEADLESS=1 python3 astra_s_live.py &       # headless: no GUI window of its own
+cd task_red_cube_to_bin/
 ```
 
 ## Usage
@@ -339,6 +357,8 @@ to sanity-check a code change before ever pointing it at the real arm.
 
 ## Module map
 
+### `vision_pick_place/task_red_cube_to_bin/` (this project)
+
 | File | Role |
 |---|---|
 | `perception_zeroshot.py` | Gemini-based detection/naming, depth-delta height, bbox-PCA yaw, the flicker-confusion safety net |
@@ -350,6 +370,19 @@ to sanity-check a code change before ever pointing it at the real arm.
 | `kinematics.py`, `config.py`, `perception.py`, `gripper.py` | From an earlier (HSV-detection, click-calibrated) iteration of this task — imported **read-only** by everything above, never modified by this package, since they're already real-hardware-validated |
 | `mujoco_sim/` | SO-101 MJCF model + collision meshes, from an earlier MuJoCo-simulation iteration |
 | `sim_dry_run.py`, `task_state_machine.py`, `collect_training_data.py`, `main.py` | Also from that earlier iteration; kept for reference, not part of the active pipeline |
+
+### `vision_pick_place/` (one directory up — runtime dependencies)
+
+| File / folder | Role |
+|---|---|
+| `astra_s_live.py` | **Owns the Astra S camera device.** Publishes RGB + depth frames to disk (`/tmp/vsp_astra_rgb.png`, `/tmp/vsp_astra_depth_mm.npy`) that everything in `task_red_cube_to_bin/` reads instead of opening the camera itself. Must be running (see Setup) before any detection call will find a fresh frame. `ASTRA_LIVE_HEADLESS=1` skips its own GUI window. |
+| `orbbec_color_camera.py` | The actual OpenNI2 device wrapper (`ThreadedOrbbecRGBDCamera`) `astra_s_live.py` and `camera_hub.py` use — one background thread reading color+depth off one device handle. |
+| `openni2_redist/` | The Orbbec/OpenNI2 SDK's redistributable binaries (`libOpenNI2.so` + drivers) — the Astra S needs these specifically; the `primesense` pip package alone isn't sufficient. |
+| `camera_utils.py` | Shared `PublishedFrameSource`/`PublishedDepthSource` (read-a-published-file-instead-of-the-device pattern) + `find_camera_index` (resolves a UVC camera's `/dev/videoN` by USB product name, since it can renumber across reconnects). |
+| `cube_detector.py` | Fixed-HSV-threshold red-cube/black-bin detection — used for the monitor overlay in `astra_s_live.py`/`camera_hub.py`'s own windows only; **not** part of `task_red_cube_to_bin`'s actual (Gemini-based) detection path. |
+| `camera_hub.py` | Wrist-camera viewer + publisher (`/tmp/vsp_wrist.png`) — optional, monitoring only, not read by any script in `task_red_cube_to_bin/`. |
+| `so101_urdf/` | URDF + collision meshes `kinematics.py`'s `RobotKinematics` (placo-based IK) loads. |
+| `homography.json` | Table-plane pixel→robot-xy calibration for **this specific physical rig** — see the rig-specific warning above. |
 
 ## Known limitations
 
